@@ -1,1 +1,1 @@
-# mobile-trading-
+# mobile-trading- EA AND INDICATOR WITH WINDOWS 
