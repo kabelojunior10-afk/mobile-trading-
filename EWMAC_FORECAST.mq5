@@ -2,11 +2,11 @@
 //|                                            EWMAC_Forecast.mq5    |
 //|            Carver Starter System — Forecast Pane (subwindow)     |
 //|         Mirrors the  "EWMAC" indicator exactly                   |
-//|  v1.09: HUD moved inside subwindow                               |
+//|  v1.10: HUD + name show chart TF, HUD reads last CLOSED bar (EA) |
 //+------------------------------------------------------------------+
 #property copyright   "Amare Capital Management"
 #property description "EWMAC forecast, capped ±20. Matches the EWMAC_EA."
-#property version     "1.09"
+#property version     "1.10"
 #property indicator_separate_window
 #property indicator_buffers 5
 #property indicator_plots   3
@@ -76,6 +76,13 @@ bool IsLightChart()
     uchar b = (uchar)(argb & 0xFF);
     double lum = 0.299 * r + 0.587 * g + 0.114 * b;
     return (lum > 128.0);
+}
+
+//+------------------------------------------------------------------+
+// Timeframe label of the chart this indicator is attached to (follows TF changes)
+string TFName()
+{
+    return StringSubstr(EnumToString((ENUM_TIMEFRAMES)_Period), 7);
 }
 
 //+------------------------------------------------------------------+
@@ -169,8 +176,8 @@ int OnInit()
     IndicatorSetDouble(INDICATOR_MAXIMUM, CapMax + 5);
 
     IndicatorSetString(INDICATOR_SHORTNAME,
-        StringFormat("EWMAC %d/%d Forecast (σ=%d)",
-                     fast_period, slow_period, StdevWindow));
+        StringFormat("EWMAC %d/%d Forecast %s (σ=%d)",
+                     fast_period, slow_period, TFName(), StdevWindow));
 
     return INIT_SUCCEEDED;
 }
@@ -279,8 +286,8 @@ int OnCalculate(const int rates_total,
 //+------------------------------------------------------------------+
 void DrawHUD(int rates_total)
 {
-    if(rates_total < 1) return;
-    int    last = rates_total - 1;
+    if(rates_total < 2) return;
+    int    last = rates_total - 2;   // last CLOSED bar = same bar the EA reads
     double f    = ForecastBuffer[last];
 
     bool isLight = IsLightChart();
@@ -300,8 +307,8 @@ void DrawHUD(int rates_total)
         else                { label = "VERY STRONG SELL"; col = isLight ? clrRed : clrRed; }
     }
 
-    string txt = StringFormat("EWMAC %d/%d  |  scalar %.2f  |  forecast %s  |  %s",
-                              fast_period, slow_period, scalar,
+    string txt = StringFormat("EWMAC %d/%d [%s]  |  scalar %.2f  |  forecast %s  |  %s",
+                              fast_period, slow_period, TFName(), scalar,
                               (f == EMPTY_VALUE ? "—" : DoubleToString(f, 2)),
                               label);
 
