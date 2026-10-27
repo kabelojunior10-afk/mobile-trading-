@@ -1,10 +1,20 @@
 //+------------------------------------------------------------------+
-//|                                                   EWMAC_BOT.mq5  |
+//|                                                   EWMAC_EA.mq5   |
 //|                 AMARE CAPITAL MANAGEMENT                         |
-//|                 Version 4.15 (Remote Desktop Alignment Fix)      |
+//|                 EWMAC Stop-and-Reverse at forecast 0             |
+//|                 Version 4.11 (Fixed lot + optional ATR trail)    |
+//|                 Forecast math MATCHES EWMAC_Forecast.mq5         |
+//|                                                                  |
+//|  Rules:                                                          |
+//|   - forecast > 0 = long, forecast < 0 = short (reverse at 0)     |
+//|   - pure stop-and-reverse                                        |
+//|   - optional ATR-based trailing stop (on/off)                    |
+//|   - if stopped out, waits for next zero-cross                    |
+//|   - signal timeframe is an input (independent of chart TF)       |
+//|   - fixed lot size                                               |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "4.15"
+#property version   "4.11"
 #property description "EWMAC pure stop-and-reverse + optional ATR trailing stop."
 
 #include <Trade/Trade.mqh>
@@ -28,31 +38,25 @@ enum ENUM_EWMAC_PAIR
 //+------------------------------------------------------------------+
 input group "EWMAC Strategy"
 input ENUM_EWMAC_PAIR EWMACPair         = EWMAC_8_32;
-input ENUM_TIMEFRAMES SignalTimeframe   = PERIOD_M1;   
+input ENUM_TIMEFRAMES SignalTimeframe   = PERIOD_M1;   // timeframe the forecast is computed on
 input int    StdevWindow                = 50;
 input double ForecastCapMin             = -20.0;
 input double ForecastCapMax             =  20.0;
 input int    WarmupBars                 = 1000;
-input bool   TradeCurrentTrend          = true;   
+input bool   TradeCurrentTrend          = true;   // enter immediately in current forecast direction on attach
 input bool   UseCarverScalar            = true;
 
 input group "Position Sizing"
 input double FixedLots                  = 0.01;
 
 input group "ATR Trailing Stop"
-input bool   UseATRTrail                = false;  
-input int    ATR_Period                 = 14;     
-input double ATR_Multiplier             = 2.0;    
-input bool   PlotTrailOnChart           = true;   
+input bool   UseATRTrail                = false;  // true = enable ATR trailing stop
+input int    ATR_Period                 = 14;     // ATR period
+input double ATR_Multiplier             = 2.0;    // ATR multiplier for trail distance
+input bool   PlotTrailOnChart           = true;   // draw current trail level on chart
 input color  TrailColor                 = clrOrange;
 input int    TrailWidth                 = 1;
-input ENUM_LINE_STYLE TrailStyle        = STYLE_SOLID;
-
-input group "ATR Trail History"
-input color  TrailHistoryColor          = clrOrange;
-input int    TrailHistoryWidth          = 1;
-input ENUM_LINE_STYLE TrailHistoryStyle = STYLE_DOT;
-input int    TrailHistoryMaxPoints      = 100;
+input ENUM_LINE_STYLE TrailStyle        = STYLE_DASH;
 
 input group "Execution"
 input ulong  MagicNumber                = 20260101;
@@ -73,22 +77,16 @@ datetime LastProcessedBar  = 0;
 double   LastForecast      = 0.0;
 double   PreviousForecast  = 0.0;
 bool     ForecastAvailable = false;
-int      TargetSide        = 0;      
-int      BlockedSide       = 0;      
+int      TargetSide        = 0;      // 1 / -1 / 0
+int      BlockedSide       = 0;      // blocked after stop-out until next zero-cross
 int      TrackedSide       = 0;
 datetime LastAttempt       = 0;
-int      g_atr_handle      = INVALID_HANDLE;
+int      g_atr_handle      = INVALID_HANDLE; // Fixed: Global ATR Handle
 
 string DashPrefix = "EWMAC_DASH_";
-const int DASH_LINES = 15; 
+const int DASH_LINES = 15;
 
 string TrailObjName = "EWMAC_ATR_TRAIL";
-string TrailHistPrefix = "EWMAC_TRAIL_HIST_";
-
-datetime g_trailTimes[];
-double   g_trailPrices[];
-int      g_trailCount = 0;
-ulong    g_currentTrailTicket = 0;
 
 //+------------------------------------------------------------------+
 void ThrottledPrint(const string msg)
@@ -99,28 +97,6 @@ void ThrottledPrint(const string msg)
    lastMsg = msg;
    lastT   = TimeCurrent();
    Print(msg);
-}
-
-//+------------------------------------------------------------------+
-void AddTrailHistoryPoint(datetime t, double price)
-{
-    if(g_trailCount > 0 && g_trailPrices[g_trailCount-1] == price) return;
-
-    if(g_trailCount >= TrailHistoryMaxPoints)
-    {
-        for(int i = 1; i < TrailHistoryMaxPoints; i++)
-        {
-            g_trailTimes[i-1]  = g_trailTimes[i];
-            g_trailPrices[i-1] = g_trailPrices[i];
-        }
-        g_trailCount--;
-    }
-    
-    ArrayResize(g_trailTimes, g_trailCount + 1);
-    ArrayResize(g_trailPrices, g_trailCount + 1);
-    g_trailTimes[g_trailCount]  = t;
-    g_trailPrices[g_trailCount] = price;
-    g_trailCount++;
 }
 
 //+------------------------------------------------------------------+
@@ -140,6 +116,7 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetAsyncMode(false);
 
+   // Fixed: Initialize the ATR handle once in OnInit
    g_atr_handle = iATR(_Symbol, SignalTimeframe, ATR_Period);
    if(g_atr_handle == INVALID_HANDLE)
    {
@@ -148,7 +125,12 @@ int OnInit()
    }
 
    Print("==================================================");
-   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v4.15");
+   Print("AMARE CAPITAL - EWMAC EA v4.11");
+   Print("Symbol: ", _Symbol, "  Signal TF: ", EnumToString(SignalTimeframe));
+   Print("EWMAC: ", FastPeriod, "/", SlowPeriod, "  Scalar: ", DoubleToString(ForecastScalar, 2));
+   Print("ATR Trail: ", (UseATRTrail ? "ON" : "OFF"),
+         "  Period=", ATR_Period, "  Mult=", DoubleToString(ATR_Multiplier, 2));
+   Print("Stop-and-reverse at forecast 0. Fixed lot size only.");
    Print("==================================================");
    return INIT_SUCCEEDED;
 }
@@ -214,7 +196,7 @@ void TrackPosition()
    if(TrackedSide != 0 && !b && !s && TrackedSide == TargetSide)
    {
       BlockedSide = TrackedSide;
-      Print("Position closed externally. Waiting for next zero-cross.");
+      Print("Position closed externally (or by trail). Waiting for the next zero-cross before re-entering.");
    }
    TrackedSide = side;
 }
@@ -225,8 +207,8 @@ void OnTick()
    TrackPosition();
    UpdateTarget();
    SyncPosition();
-   ManageATRTrail();          
-   UpdateTrailPlot();         
+   ManageATRTrail();          // ATR trailing stop logic
+   UpdateTrailPlot();         // plot current trail level
 
    static datetime lastDash = 0;
    if(TimeCurrent() != lastDash)
@@ -384,6 +366,7 @@ bool ExecuteSignal(int signal)
       return false;
    }
 
+   //--- FIX: Calculate Initial Stop Loss respecting Broker Stop Levels
    double initialSL = 0.0;
    if(UseATRTrail && g_atr_handle != INVALID_HANDLE)
    {
@@ -392,14 +375,14 @@ bool ExecuteSignal(int signal)
       {
          double trailDist = atrBuf[0] * ATR_Multiplier;
          double minStopDist = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
-         if(minStopDist <= 0) minStopDist = _Point * 2;
+         if(minStopDist <= 0) minStopDist = _Point * 2; // Fallback
 
-         if(signal == 1)
+         if(signal == 1) // Buy
          {
             initialSL = price - trailDist;
             if(initialSL > price - minStopDist) initialSL = price - minStopDist;
          }
-         else
+         else // Sell
          {
             initialSL = price + trailDist;
             if(initialSL < price + minStopDist) initialSL = price + minStopDist;
@@ -420,25 +403,6 @@ bool ExecuteSignal(int signal)
       Print(msg);
       if(SendPopup) Alert(msg);
       if(SendPush) SendNotification(msg);
-      
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         ulong tk = PositionGetTicket(i);
-         if(tk > 0 && PositionSelectByTicket(tk))
-         {
-            if(PositionGetString(POSITION_SYMBOL) == _Symbol && (ulong)PositionGetInteger(POSITION_MAGIC) == MagicNumber)
-            {
-               if(g_currentTrailTicket != tk) {
-                   g_currentTrailTicket = tk;
-                   g_trailCount = 0;
-                   ObjectsDeleteAll(0, TrailHistPrefix);
-                   double sl = PositionGetDouble(POSITION_SL);
-                   if(sl > 0) AddTrailHistoryPoint(TimeCurrent(), sl);
-               }
-               break;
-            }
-         }
-      }
       return true;
    }
 
@@ -447,11 +411,14 @@ bool ExecuteSignal(int signal)
 }
 
 //+------------------------------------------------------------------+
+//| ATR Trailing Stop management                                     |
+//+------------------------------------------------------------------+
 void ManageATRTrail()
 {
    if(!UseATRTrail) return;
    if(g_atr_handle == INVALID_HANDLE) return;
 
+   //--- Retrieve the current ATR value
    double atrBuf[];
    if(CopyBuffer(g_atr_handle, 0, 0, 1, atrBuf) < 1 || atrBuf[0] <= 0.0)
       return;
@@ -479,50 +446,52 @@ void ManageATRTrail()
       if(ptype == POSITION_TYPE_BUY)
       {
          newSL = SymbolInfoDouble(_Symbol, SYMBOL_BID) - trailDist;
+         
+         // Only move SL up
          if(currentSL > 0.0 && newSL <= currentSL) continue;
+         
+         // Ensure the new SL is at least the minimum distance from the current Bid
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          if(newSL > bid - minStopDist) newSL = bid - minStopDist;
+
+         // Optional: Do not lock in a loss (remove this if you want a tight trail from the start)
          if(newSL <= openPrice) continue;
       }
-      else
+      else // SELL
       {
          newSL = SymbolInfoDouble(_Symbol, SYMBOL_ASK) + trailDist;
+         
+         // Only move SL down
          if(currentSL > 0.0 && newSL >= currentSL) continue;
+
+         // Ensure the new SL is at least the minimum distance from the current Ask
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
          if(newSL < ask + minStopDist) newSL = ask + minStopDist;
+
+         // Optional: Do not lock in a loss
          if(newSL >= openPrice) continue;
       }
 
+      //--- Normalize and apply
       newSL = NormalizeDouble(newSL, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-      if(trade.PositionModify(ticket, newSL, currentTP))
-      {
-          if(g_currentTrailTicket != ticket) {
-              g_currentTrailTicket = ticket;
-              g_trailCount = 0;
-              ObjectsDeleteAll(0, TrailHistPrefix);
-          }
-          AddTrailHistoryPoint(TimeCurrent(), newSL);
-      }
-      else
+      if(!trade.PositionModify(ticket, newSL, currentTP))
          ThrottledPrint("ATR Trail modify failed: " + trade.ResultRetcodeDescription());
    }
 }
 
+//+------------------------------------------------------------------+
+//| Plot the current ATR trail level on the chart                    |
 //+------------------------------------------------------------------+
 void UpdateTrailPlot()
 {
    if(!UseATRTrail || !PlotTrailOnChart)
    {
       ObjectDelete(0, TrailObjName);
-      ObjectsDeleteAll(0, TrailHistPrefix);
-      g_currentTrailTicket = 0;
-      g_trailCount = 0;
       return;
    }
 
    double trailPrice = 0.0;
    bool found = false;
-   ulong currentTicket = 0;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -536,82 +505,29 @@ void UpdateTrailPlot()
       {
          trailPrice = sl;
          found = true;
-         currentTicket = ticket;
-         break;
+         break; // plot the first (usually only) position's SL
       }
    }
 
    if(!found)
    {
       ObjectDelete(0, TrailObjName);
-      ObjectsDeleteAll(0, TrailHistPrefix);
-      g_currentTrailTicket = 0;
-      g_trailCount = 0;
       return;
-   }
-
-   if(g_currentTrailTicket != currentTicket) {
-       g_currentTrailTicket = currentTicket;
-       g_trailCount = 0;
-       ObjectsDeleteAll(0, TrailHistPrefix);
-       AddTrailHistoryPoint(TimeCurrent(), trailPrice);
    }
 
    if(ObjectFind(0, TrailObjName) < 0)
    {
       ObjectCreate(0, TrailObjName, OBJ_HLINE, 0, 0, trailPrice);
+      ObjectSetInteger(0, TrailObjName, OBJPROP_COLOR, TrailColor);
+      ObjectSetInteger(0, TrailObjName, OBJPROP_WIDTH, TrailWidth);
+      ObjectSetInteger(0, TrailObjName, OBJPROP_STYLE, TrailStyle);
       ObjectSetInteger(0, TrailObjName, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, TrailObjName, OBJPROP_BACK, true);
-      ObjectSetInteger(0, TrailObjName, OBJPROP_HIDDEN, true);
+      ObjectSetString (0, TrailObjName, OBJPROP_TEXT, "ATR Trail");
    }
-   ObjectSetDouble(0, TrailObjName, OBJPROP_PRICE, trailPrice);
-   ObjectSetInteger(0, TrailObjName, OBJPROP_COLOR, TrailColor);
-   ObjectSetInteger(0, TrailObjName, OBJPROP_WIDTH, TrailWidth);
-   ObjectSetInteger(0, TrailObjName, OBJPROP_STYLE, TrailStyle);
-   ObjectSetString(0, TrailObjName, OBJPROP_TEXT, " ");
-
-   for(int i = 0; i < g_trailCount - 1; i++)
+   else
    {
-       string name = TrailHistPrefix + IntegerToString(i);
-       if(ObjectFind(0, name) < 0)
-       {
-           ObjectCreate(0, name, OBJ_TREND, 0, g_trailTimes[i], g_trailPrices[i], g_trailTimes[i+1], g_trailPrices[i+1]);
-           ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-           ObjectSetInteger(0, name, OBJPROP_BACK, true);
-           ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
-           ObjectSetInteger(0, name, OBJPROP_COLOR, TrailHistoryColor);
-           ObjectSetInteger(0, name, OBJPROP_WIDTH, TrailHistoryWidth);
-           ObjectSetInteger(0, name, OBJPROP_STYLE, TrailHistoryStyle);
-           ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
-       }
-       else
-       {
-           ObjectMove(0, name, 0, g_trailTimes[i], g_trailPrices[i]);
-           ObjectMove(0, name, 1, g_trailTimes[i+1], g_trailPrices[i+1]);
-       }
-       ObjectSetString(0, name, OBJPROP_TEXT, " ");
-   }
-
-   if(g_trailCount > 0)
-   {
-       string name = TrailHistPrefix + "CURRENT";
-       if(ObjectFind(0, name) < 0)
-       {
-           ObjectCreate(0, name, OBJ_TREND, 0, g_trailTimes[g_trailCount-1], g_trailPrices[g_trailCount-1], TimeCurrent(), trailPrice);
-           ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-           ObjectSetInteger(0, name, OBJPROP_BACK, true);
-           ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
-           ObjectSetInteger(0, name, OBJPROP_COLOR, TrailHistoryColor);
-           ObjectSetInteger(0, name, OBJPROP_WIDTH, TrailHistoryWidth);
-           ObjectSetInteger(0, name, OBJPROP_STYLE, TrailHistoryStyle);
-           ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
-       }
-       else
-       {
-           ObjectMove(0, name, 0, g_trailTimes[g_trailCount-1], g_trailPrices[g_trailCount-1]);
-           ObjectMove(0, name, 1, TimeCurrent(), trailPrice);
-       }
-       ObjectSetString(0, name, OBJPROP_TEXT, " ");
+      ObjectSetDouble(0, TrailObjName, OBJPROP_PRICE, trailPrice);
    }
 }
 
@@ -713,23 +629,22 @@ void UpdateDashboard()
 
    string trailText = UseATRTrail ? "ON (" + IntegerToString(ATR_Period) + "x" + DoubleToString(ATR_Multiplier,1) + ")" : "OFF";
 
-   // StringFormat ensures perfect columns regardless of font scaling
    string lines[15];
-   lines[0]  = "AMARE CAPITAL MANAGEMENT";
-   lines[1]  = "EWMAC v4.15";
-   lines[2]  = "--------------------------------";
-   lines[3]  = StringFormat("Symbol:    %s", _Symbol);
-   lines[4]  = StringFormat("TF:        %s", EnumToString(SignalTimeframe));
-   lines[5]  = StringFormat("EWMAC:     %d/%d", FastPeriod, SlowPeriod);
-   lines[6]  = StringFormat("Scalar:    %.2f", ForecastScalar);
-   lines[7]  = StringFormat("Forecast:  %.2f", LastForecast);
-   lines[8]  = StringFormat("Previous:  %.2f", PreviousForecast);
-   lines[9]  = StringFormat("Trend:     %s", direction);
-   lines[10] = StringFormat("Position:  %s", positionText);
-   lines[11] = StringFormat("Target:    %s", targetText);
-   lines[12] = StringFormat("Lots:      %.4f", FixedLots);
-   lines[13] = StringFormat("ATR Trail: %s", trailText); 
-   lines[14] = " ";
+   lines[0]  = "AMARE CAPITAL - EWMAC v4.11";
+   lines[1]  = "----------------------------------";
+   lines[2]  = "Symbol:   " + _Symbol;
+   lines[3]  = "TF:       " + EnumToString(SignalTimeframe);
+   lines[4]  = "EWMAC:    " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod);
+   lines[5]  = "Scalar:   " + DoubleToString(ForecastScalar, 2);
+   lines[6]  = "Forecast: " + DoubleToString(LastForecast, 2);
+   lines[7]  = "Previous: " + DoubleToString(PreviousForecast, 2);
+   lines[8]  = "Trend:    " + direction;
+   lines[9]  = "Position: " + positionText;
+   lines[10] = "Target:   " + targetText;
+   lines[11] = "Lots:     " + DoubleToString(FixedLots, 4);
+   lines[12] = "ATR Trail:" + trailText;
+   lines[13] = "----------------------------------";
+   lines[14] = "";
 
    string bgName = DashPrefix + "BG";
    if(ObjectFind(0, bgName) < 0)
@@ -742,7 +657,7 @@ void UpdateDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_BACK, false);
       ObjectSetInteger(0, bgName, OBJPROP_SELECTABLE, false);
    }
-   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 250); 
+   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 230);
    ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 20 + DASH_LINES * 15);
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, bgClr);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, borderClr);
@@ -754,11 +669,9 @@ void UpdateDashboard()
       {
          ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
          ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
-         // LEFT ALIGNMENT INSIDE THE BOX
-         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER); 
-         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 260); // Box right edge (10) + Box width (250) = Left edge
-         // Universal Monospaced Font guaranteed on AWS
-         ObjectSetString(0, name, OBJPROP_FONT, "Courier New"); 
+         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 230);
+         ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
          ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
          ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, name, OBJPROP_BACK, false);
@@ -766,7 +679,7 @@ void UpdateDashboard()
       ObjectSetInteger(0, name, OBJPROP_YDISTANCE, 30 + (i * 15));
       ObjectSetString(0, name, OBJPROP_TEXT, lines[i]);
 
-      if(i == 9)
+      if(i == 8)
       {
          color trendClr = textClr;
          if(direction == "BULLISH") trendClr = bullClr;
@@ -774,11 +687,11 @@ void UpdateDashboard()
          else if(direction == "NEUTRAL") trendClr = neutralClr;
          ObjectSetInteger(0, name, OBJPROP_COLOR, trendClr);
       }
-      else if(i == 10)
+      else if(i == 9)
       {
          ObjectSetInteger(0, name, OBJPROP_COLOR, (positionText == "FLAT") ? textClr : posClr);
       }
-      else if(i == 0 || i == 1)
+      else if(i == 0)
       {
          ObjectSetInteger(0, name, OBJPROP_COLOR, headerClr);
       }
@@ -792,6 +705,7 @@ void UpdateDashboard()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   // Fixed: Release the ATR handle
    if(g_atr_handle != INVALID_HANDLE)
    {
       IndicatorRelease(g_atr_handle);
@@ -799,7 +713,6 @@ void OnDeinit(const int reason)
    }
 
    ObjectsDeleteAll(0, DashPrefix);
-   ObjectsDeleteAll(0, TrailHistPrefix);
    ObjectDelete(0, TrailObjName);
    Comment("");
    Print("EWMAC EA stopped. Reason: ", reason);
