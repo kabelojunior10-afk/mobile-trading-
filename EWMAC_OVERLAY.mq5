@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                             EWMAC_Overlay.mq5    |
 //|             Carver Starter System — EWMA lines + signals         |
-//|  v1.05: fully configurable inputs                                |
+//|  v1.06: name shows chart TF (follows TF changes)                 |
 //+------------------------------------------------------------------+
 #property copyright   "Amare Capital Management"
 #property description "EWMAC EWMA overlay with colour-flip and arrows."
-#property version     "1.05"
+#property version     "1.06"
 #property indicator_chart_window
 #property indicator_buffers 6
 #property indicator_plots   4
@@ -135,7 +135,8 @@ int OnInit()
         PlotIndexSetDouble(p, PLOT_EMPTY_VALUE, EMPTY_VALUE);
 
     IndicatorSetString(INDICATOR_SHORTNAME,
-        StringFormat("EWMAC Overlay %d/%d", fast_period, slow_period));
+        StringFormat("EWMAC Overlay %d/%d %s", fast_period, slow_period,
+                     StringSubstr(EnumToString((ENUM_TIMEFRAMES)_Period), 7)));
 
     return INIT_SUCCEEDED;
 }
