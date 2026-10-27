@@ -2,11 +2,10 @@
 //|                                                   EWMAC_BOT.mq5  |
 //|                 AMARE CAPITAL MANAGEMENT                         |
 //|                 EWMAC Stop-and-Reverse at forecast 0             |
-//|                 Version 4.12 (Fixed lot + ATR trail + History)   |
-//|                 Forecast math MATCHES EWMAC_Forecast.mq5         |
+//|                 Version 4.13 (Fixed Alignment + Spacing)         |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "4.12"
+#property version   "4.13"
 #property description "EWMAC pure stop-and-reverse + optional ATR trailing stop."
 
 #include <Trade/Trade.mqh>
@@ -150,7 +149,7 @@ int OnInit()
    }
 
    Print("==================================================");
-   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v4.12");
+   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v4.13");
    Print("Symbol: ", _Symbol, "  Signal TF: ", EnumToString(SignalTimeframe));
    Print("EWMAC: ", FastPeriod, "/", SlowPeriod, "  Scalar: ", DoubleToString(ForecastScalar, 2));
    Print("ATR Trail: ", (UseATRTrail ? "ON" : "OFF"),
@@ -577,7 +576,7 @@ void UpdateTrailPlot()
    ObjectSetInteger(0, TrailObjName, OBJPROP_COLOR, TrailColor);
    ObjectSetInteger(0, TrailObjName, OBJPROP_WIDTH, TrailWidth);
    ObjectSetInteger(0, TrailObjName, OBJPROP_STYLE, TrailStyle);
-   ObjectSetString(0, TrailObjName, OBJPROP_TEXT, " "); // Space removes label
+   ObjectSetString(0, TrailObjName, OBJPROP_TEXT, " ");
 
    // History path - dotted line segments
    for(int i = 0; i < g_trailCount - 1; i++)
@@ -724,23 +723,24 @@ void UpdateDashboard()
 
    string trailText = UseATRTrail ? "ON (" + IntegerToString(ATR_Period) + "x" + DoubleToString(ATR_Multiplier,1) + ")" : "OFF";
 
+   // Formatted with padded spaces to align colons perfectly
    string lines[16];
-   lines[0]  = "AMARE CAPITAL MANAGEMENT";
-   lines[1]  = "EWMAC v4.12";
+   lines[0]  = " AMARE CAPITAL MANAGEMENT";
+   lines[1]  = " EWMAC v4.13";
    lines[2]  = "----------------------------------";
-   lines[3]  = "Symbol:   " + _Symbol;
-   lines[4]  = "TF:       " + EnumToString(SignalTimeframe);
-   lines[5]  = "EWMAC:    " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod);
-   lines[6]  = "Scalar:   " + DoubleToString(ForecastScalar, 2);
-   lines[7]  = "Forecast: " + DoubleToString(LastForecast, 2);
-   lines[8]  = "Previous: " + DoubleToString(PreviousForecast, 2);
-   lines[9]  = "Trend:    " + direction;
-   lines[10] = "Position: " + positionText;
-   lines[11] = "Target:   " + targetText;
-   lines[12] = "Lots:     " + DoubleToString(FixedLots, 4);
-   lines[13] = "ATR Trail:" + trailText;
+   lines[3]  = " Symbol:    " + _Symbol;
+   lines[4]  = " TF:        " + EnumToString(SignalTimeframe);
+   lines[5]  = " EWMAC:     " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod);
+   lines[6]  = " Scalar:    " + DoubleToString(ForecastScalar, 2);
+   lines[7]  = " Forecast:  " + DoubleToString(LastForecast, 2);
+   lines[8]  = " Previous:  " + DoubleToString(PreviousForecast, 2);
+   lines[9]  = " Trend:     " + direction;
+   lines[10] = " Position:  " + positionText;
+   lines[11] = " Target:    " + targetText;
+   lines[12] = " Lots:      " + DoubleToString(FixedLots, 4);
+   lines[13] = " ATR Trail: " + trailText; // Added missing space
    lines[14] = "----------------------------------";
-   lines[15] = " "; // Changed from "" to " " to prevent "Label" text
+   lines[15] = " ";
 
    string bgName = DashPrefix + "BG";
    if(ObjectFind(0, bgName) < 0)
@@ -753,7 +753,7 @@ void UpdateDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_BACK, false);
       ObjectSetInteger(0, bgName, OBJPROP_SELECTABLE, false);
    }
-   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 240);
+   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 260); // Increased width slightly
    ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 20 + DASH_LINES * 15);
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, bgClr);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, borderClr);
@@ -765,8 +765,9 @@ void UpdateDashboard()
       {
          ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
          ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
-         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER);
-         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 240);
+         // CHANGED TO LEFT ANCHOR FOR BETTER ALIGNMENT
+         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 270); // 10(box offset) + 260(box width) = 270
          ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
          ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
          ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
