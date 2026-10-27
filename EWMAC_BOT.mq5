@@ -2,10 +2,10 @@
 //|                                                   EWMAC_BOT.mq5  |
 //|                 AMARE CAPITAL MANAGEMENT                         |
 //|                 EWMAC Stop-and-Reverse at forecast 0             |
-//|                 Version 4.13 (Fixed Alignment + Spacing)         |
+//|                 Version 4.14 (Restored right-align layout)       |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "4.13"
+#property version   "4.14"
 #property description "EWMAC pure stop-and-reverse + optional ATR trailing stop."
 
 #include <Trade/Trade.mqh>
@@ -74,14 +74,14 @@ datetime LastProcessedBar  = 0;
 double   LastForecast      = 0.0;
 double   PreviousForecast  = 0.0;
 bool     ForecastAvailable = false;
-int      TargetSide        = 0;      // 1 / -1 / 0
-int      BlockedSide       = 0;      // blocked after stop-out until next zero-cross
+int      TargetSide        = 0;      
+int      BlockedSide       = 0;      
 int      TrackedSide       = 0;
 datetime LastAttempt       = 0;
 int      g_atr_handle      = INVALID_HANDLE;
 
 string DashPrefix = "EWMAC_DASH_";
-const int DASH_LINES = 16;
+const int DASH_LINES = 15; // Reduced from 16 to 15 lines exactly
 
 string TrailObjName = "EWMAC_ATR_TRAIL";
 string TrailHistPrefix = "EWMAC_TRAIL_HIST_";
@@ -149,11 +149,7 @@ int OnInit()
    }
 
    Print("==================================================");
-   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v4.13");
-   Print("Symbol: ", _Symbol, "  Signal TF: ", EnumToString(SignalTimeframe));
-   Print("EWMAC: ", FastPeriod, "/", SlowPeriod, "  Scalar: ", DoubleToString(ForecastScalar, 2));
-   Print("ATR Trail: ", (UseATRTrail ? "ON" : "OFF"),
-         "  Period=", ATR_Period, "  Mult=", DoubleToString(ATR_Multiplier, 2));
+   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v4.14");
    Print("==================================================");
    return INIT_SUCCEEDED;
 }
@@ -219,7 +215,7 @@ void TrackPosition()
    if(TrackedSide != 0 && !b && !s && TrackedSide == TargetSide)
    {
       BlockedSide = TrackedSide;
-      Print("Position closed externally (or by trail). Waiting for the next zero-cross before re-entering.");
+      Print("Position closed externally. Waiting for next zero-cross.");
    }
    TrackedSide = side;
 }
@@ -426,7 +422,6 @@ bool ExecuteSignal(int signal)
       if(SendPopup) Alert(msg);
       if(SendPush) SendNotification(msg);
       
-      // Record initial trail point
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          ulong tk = PositionGetTicket(i);
@@ -445,7 +440,6 @@ bool ExecuteSignal(int signal)
             }
          }
       }
-      
       return true;
    }
 
@@ -564,7 +558,6 @@ void UpdateTrailPlot()
        AddTrailHistoryPoint(TimeCurrent(), trailPrice);
    }
 
-   // Current trail - solid line (Label completely removed using " ")
    if(ObjectFind(0, TrailObjName) < 0)
    {
       ObjectCreate(0, TrailObjName, OBJ_HLINE, 0, 0, trailPrice);
@@ -578,7 +571,6 @@ void UpdateTrailPlot()
    ObjectSetInteger(0, TrailObjName, OBJPROP_STYLE, TrailStyle);
    ObjectSetString(0, TrailObjName, OBJPROP_TEXT, " ");
 
-   // History path - dotted line segments
    for(int i = 0; i < g_trailCount - 1; i++)
    {
        string name = TrailHistPrefix + IntegerToString(i);
@@ -601,7 +593,6 @@ void UpdateTrailPlot()
        ObjectSetString(0, name, OBJPROP_TEXT, " ");
    }
 
-   // Current segment from last history point to now
    if(g_trailCount > 0)
    {
        string name = TrailHistPrefix + "CURRENT";
@@ -721,26 +712,25 @@ void UpdateDashboard()
    string targetText = (TargetSide == 1) ? "BUY" : (TargetSide == -1 ? "SELL" : "NONE");
    if(TargetSide != 0 && BlockedSide == TargetSide) targetText += " (WAIT CROSS)";
 
+   // Added space after ATR Trail:
    string trailText = UseATRTrail ? "ON (" + IntegerToString(ATR_Period) + "x" + DoubleToString(ATR_Multiplier,1) + ")" : "OFF";
 
-   // Formatted with padded spaces to align colons perfectly
-   string lines[16];
-   lines[0]  = " AMARE CAPITAL MANAGEMENT";
-   lines[1]  = " EWMAC v4.13";
+   string lines[15]; // 15 lines, indices 0 to 14
+   lines[0]  = "AMARE CAPITAL MANAGEMENT";
+   lines[1]  = "EWMAC v4.14";
    lines[2]  = "----------------------------------";
-   lines[3]  = " Symbol:    " + _Symbol;
-   lines[4]  = " TF:        " + EnumToString(SignalTimeframe);
-   lines[5]  = " EWMAC:     " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod);
-   lines[6]  = " Scalar:    " + DoubleToString(ForecastScalar, 2);
-   lines[7]  = " Forecast:  " + DoubleToString(LastForecast, 2);
-   lines[8]  = " Previous:  " + DoubleToString(PreviousForecast, 2);
-   lines[9]  = " Trend:     " + direction;
-   lines[10] = " Position:  " + positionText;
-   lines[11] = " Target:    " + targetText;
-   lines[12] = " Lots:      " + DoubleToString(FixedLots, 4);
-   lines[13] = " ATR Trail: " + trailText; // Added missing space
-   lines[14] = "----------------------------------";
-   lines[15] = " ";
+   lines[3]  = "Symbol:   " + _Symbol;
+   lines[4]  = "TF:       " + EnumToString(SignalTimeframe);
+   lines[5]  = "EWMAC:    " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod);
+   lines[6]  = "Scalar:   " + DoubleToString(ForecastScalar, 2);
+   lines[7]  = "Forecast: " + DoubleToString(LastForecast, 2);
+   lines[8]  = "Previous: " + DoubleToString(PreviousForecast, 2);
+   lines[9]  = "Trend:    " + direction;
+   lines[10] = "Position: " + positionText;
+   lines[11] = "Target:   " + targetText;
+   lines[12] = "Lots:     " + DoubleToString(FixedLots, 4);
+   lines[13] = "ATR Trail: " + trailText; // Space added here
+   lines[14] = " "; // Space instead of empty string kills the "Label" word
 
    string bgName = DashPrefix + "BG";
    if(ObjectFind(0, bgName) < 0)
@@ -753,7 +743,7 @@ void UpdateDashboard()
       ObjectSetInteger(0, bgName, OBJPROP_BACK, false);
       ObjectSetInteger(0, bgName, OBJPROP_SELECTABLE, false);
    }
-   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 260); // Increased width slightly
+   ObjectSetInteger(0, bgName, OBJPROP_XSIZE, 230);
    ObjectSetInteger(0, bgName, OBJPROP_YSIZE, 20 + DASH_LINES * 15);
    ObjectSetInteger(0, bgName, OBJPROP_BGCOLOR, bgClr);
    ObjectSetInteger(0, bgName, OBJPROP_COLOR, borderClr);
@@ -765,9 +755,8 @@ void UpdateDashboard()
       {
          ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
          ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
-         // CHANGED TO LEFT ANCHOR FOR BETTER ALIGNMENT
-         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
-         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 270); // 10(box offset) + 260(box width) = 270
+         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT_UPPER); // Reverted to Right Anchor
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 230); // Right inside the box
          ObjectSetString(0, name, OBJPROP_FONT, "Consolas");
          ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
          ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
