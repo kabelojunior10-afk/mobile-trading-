@@ -10,26 +10,22 @@
 #property indicator_separate_window
 #property indicator_buffers 5
 #property indicator_plots   3
-
 // Forecast line
 #property indicator_label1  "Forecast"
 #property indicator_type1   DRAW_LINE
 #property indicator_color1  clrDodgerBlue
 #property indicator_style1  STYLE_SOLID
 #property indicator_width1  2
-
 // Buy arrow
 #property indicator_label2  "Buy"
 #property indicator_type2   DRAW_ARROW
 #property indicator_color2  clrLime
 #property indicator_width2  2
-
 // Sell arrow
 #property indicator_label3  "Sell"
 #property indicator_type3   DRAW_ARROW
 #property indicator_color3  clrRed
 #property indicator_width3  2
-
 //------------------------------------------------------------------|
 enum ENUM_EWMAC_PAIR
 {
@@ -40,7 +36,6 @@ enum ENUM_EWMAC_PAIR
     PAIR_32_128 = 4,
     PAIR_64_256 = 5
 };
-
 input group "EWMAC Core"
 input ENUM_EWMAC_PAIR Pair           = PAIR_8_32;   // EWMAC pair
 input int             StdevWindow    = 50;          // StdDev window of price changes (bars)
@@ -49,23 +44,19 @@ input double          CapMax         =  20.0;       // Forecast cap max
 input double          BuyThreshold   =   0.0;       // Buy signal threshold
 input double          SellThreshold  =   0.0;       // Sell signal threshold
 input bool            UseCarverScalar = true;       // true = Carver scalars, false = 10/sqrt(fast)
-
 input group "Display"
 input bool            ShowHUD        = true;        // Show HUD label inside oscillator
 input int             HUD_Y          = 10;          // HUD vertical offset (pixels)
-
 //--- buffers
 double ForecastBuffer[];
 double BuyBuffer[];
 double SellBuffer[];
 double FastEma[];
 double SlowEma[];
-
 //--- resolved parameters
 int    fast_period = 8;
 int    slow_period = 32;
 double scalar      = 5.3;
-
 //+------------------------------------------------------------------+
 bool IsLightChart()
 {
@@ -77,14 +68,12 @@ bool IsLightChart()
     double lum = 0.299 * r + 0.587 * g + 0.114 * b;
     return (lum > 128.0);
 }
-
 //+------------------------------------------------------------------+
 // Timeframe label of the chart this indicator is attached to (follows TF changes)
 string TFName()
 {
     return StringSubstr(EnumToString((ENUM_TIMEFRAMES)_Period), 7);
 }
-
 //+------------------------------------------------------------------+
 //| Incremental EMA (SMA seed)                                       |
 //+------------------------------------------------------------------+
@@ -101,11 +90,9 @@ void CalcEMA(const double &close[], double &ema[], int period, int total, int pr
       s = period;
    }
    else s = prev - 1;
-
    for(int i = s; i < total; i++)
       ema[i] = a * close[i] + (1.0 - a) * ema[i - 1];
 }
-
 //+------------------------------------------------------------------+
 int OnInit()
 {
@@ -118,7 +105,6 @@ int OnInit()
         case PAIR_32_128: fast_period=32; slow_period=128; break;
         case PAIR_64_256: fast_period=64; slow_period=256; break;
     }
-
     if(UseCarverScalar)
     {
         switch(Pair)
@@ -133,55 +119,50 @@ int OnInit()
     }
     else
         scalar = 10.0 / MathSqrt((double)fast_period);
-
     if(StdevWindow < 2)              return INIT_PARAMETERS_INCORRECT;
     if(CapMax <= CapMin)             return INIT_PARAMETERS_INCORRECT;
     if(BuyThreshold  < CapMin)       return INIT_PARAMETERS_INCORRECT;
     if(SellThreshold > CapMax)       return INIT_PARAMETERS_INCORRECT;
     if(BuyThreshold < SellThreshold) return INIT_PARAMETERS_INCORRECT;
-
     SetIndexBuffer(0, ForecastBuffer, INDICATOR_DATA);
     SetIndexBuffer(1, BuyBuffer,      INDICATOR_DATA);
     SetIndexBuffer(2, SellBuffer,     INDICATOR_DATA);
     SetIndexBuffer(3, FastEma,        INDICATOR_CALCULATIONS);
     SetIndexBuffer(4, SlowEma,        INDICATOR_CALCULATIONS);
-
     PlotIndexSetInteger(1, PLOT_ARROW, 233);
     PlotIndexSetInteger(2, PLOT_ARROW, 234);
-
     PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE);
-
-    IndicatorSetInteger(INDICATOR_LEVELS, 5);
+    IndicatorSetInteger(INDICATOR_LEVELS, 7);
     IndicatorSetDouble(INDICATOR_LEVELVALUE, 0, 0.0);
     IndicatorSetDouble(INDICATOR_LEVELVALUE, 1, CapMax);
     IndicatorSetDouble(INDICATOR_LEVELVALUE, 2, CapMin);
     IndicatorSetDouble(INDICATOR_LEVELVALUE, 3, BuyThreshold);
     IndicatorSetDouble(INDICATOR_LEVELVALUE, 4, SellThreshold);
-
+    IndicatorSetDouble(INDICATOR_LEVELVALUE, 5, 10.0);   // +10
+    IndicatorSetDouble(INDICATOR_LEVELVALUE, 6, -10.0);  // -10
     IndicatorSetInteger(INDICATOR_LEVELCOLOR, 0, clrGray);
     IndicatorSetInteger(INDICATOR_LEVELCOLOR, 1, clrDimGray);
     IndicatorSetInteger(INDICATOR_LEVELCOLOR, 2, clrDimGray);
     IndicatorSetInteger(INDICATOR_LEVELCOLOR, 3, clrSeaGreen);
     IndicatorSetInteger(INDICATOR_LEVELCOLOR, 4, clrIndianRed);
-
+    IndicatorSetInteger(INDICATOR_LEVELCOLOR, 5, clrLime);   // +10 green
+    IndicatorSetInteger(INDICATOR_LEVELCOLOR, 6, clrRed);    // -10 red
     IndicatorSetInteger(INDICATOR_LEVELSTYLE, 0, STYLE_DOT);
     IndicatorSetInteger(INDICATOR_LEVELSTYLE, 1, STYLE_DASHDOT);
     IndicatorSetInteger(INDICATOR_LEVELSTYLE, 2, STYLE_DASHDOT);
     IndicatorSetInteger(INDICATOR_LEVELSTYLE, 3, STYLE_DOT);
     IndicatorSetInteger(INDICATOR_LEVELSTYLE, 4, STYLE_DOT);
-
+    IndicatorSetInteger(INDICATOR_LEVELSTYLE, 5, STYLE_DOT);  // +10
+    IndicatorSetInteger(INDICATOR_LEVELSTYLE, 6, STYLE_DOT);  // -10
     IndicatorSetDouble(INDICATOR_MINIMUM, CapMin - 5);
     IndicatorSetDouble(INDICATOR_MAXIMUM, CapMax + 5);
-
     IndicatorSetString(INDICATOR_SHORTNAME,
         StringFormat("EWMAC %d/%d Forecast %s (σ=%d)",
                      fast_period, slow_period, TFName(), StdevWindow));
-
     return INIT_SUCCEEDED;
 }
-
 //+------------------------------------------------------------------+
 double RollingStdev(const double &close[], int i)
 {
@@ -203,7 +184,6 @@ double RollingStdev(const double &close[], int i)
     double var  = sumSq / StdevWindow - mean * mean;
     return MathSqrt(MathMax(var, 0.0));
 }
-
 //+------------------------------------------------------------------+
 int OnCalculate(const int rates_total,
                 const int prev_calculated,
@@ -218,10 +198,8 @@ int OnCalculate(const int rates_total,
 {
     int min_bars = StdevWindow + slow_period + 5;
     if(rates_total < min_bars) return 0;
-
     CalcEMA(close, FastEma, fast_period, rates_total, prev_calculated);
     CalcEMA(close, SlowEma, slow_period, rates_total, prev_calculated);
-
     int start;
     if(prev_calculated < min_bars)
     {
@@ -238,7 +216,6 @@ int OnCalculate(const int rates_total,
         start = prev_calculated - 1;
         if(start < min_bars) start = min_bars - 1;
     }
-
     for(int i = start; i < rates_total; i++)
     {
         if(FastEma[i] == EMPTY_VALUE || SlowEma[i] == EMPTY_VALUE)
@@ -248,7 +225,6 @@ int OnCalculate(const int rates_total,
             SellBuffer[i]     = EMPTY_VALUE;
             continue;
         }
-
         double stdev = RollingStdev(close, i);
         if(stdev == EMPTY_VALUE || stdev < _Point * 0.1)
             stdev = close[i] * 0.002;
@@ -259,12 +235,10 @@ int OnCalculate(const int rates_total,
             SellBuffer[i]     = EMPTY_VALUE;
             continue;
         }
-
         double raw_ewmac = FastEma[i] - SlowEma[i];
         double forecast  = raw_ewmac / stdev * scalar;
         double capped    = MathMax(CapMin, MathMin(CapMax, forecast));
         ForecastBuffer[i] = capped;
-
         bool buy = false, sell = false;
         if(i > 0 && ForecastBuffer[i-1] != EMPTY_VALUE)
         {
@@ -272,28 +246,23 @@ int OnCalculate(const int rates_total,
             if(prev <= BuyThreshold  && capped > BuyThreshold)  buy  = true;
             if(prev >= SellThreshold && capped < SellThreshold) sell = true;
         }
-
         // arrows only on closed bars
         bool closed = (i < rates_total - 1);
         BuyBuffer[i]  = (buy  && closed) ? -CapMax - 2.5 : EMPTY_VALUE;
         SellBuffer[i] = (sell && closed) ?  CapMax + 2.5 : EMPTY_VALUE;
     }
-
     if(ShowHUD) DrawHUD(rates_total);
     return rates_total;
 }
-
 //+------------------------------------------------------------------+
 void DrawHUD(int rates_total)
 {
     if(rates_total < 2) return;
     int    last = rates_total - 2;   // last CLOSED bar = same bar the EA reads
     double f    = ForecastBuffer[last];
-
     bool isLight = IsLightChart();
     string label = "—";
     color  col   = isLight ? clrBlack : clrWhite;
-
     if(f != EMPTY_VALUE)
     {
         if(f >= 17.5)       { label = "VERY STRONG BUY";  col = isLight ? clrGreen : clrLime; }
@@ -306,18 +275,14 @@ void DrawHUD(int rates_total)
         else if(f > -17.5)  { label = "STRONG SELL";      col = isLight ? clrRed : clrRed; }
         else                { label = "VERY STRONG SELL"; col = isLight ? clrRed : clrRed; }
     }
-
     string txt = StringFormat("EWMAC %d/%d [%s]  |  scalar %.2f  |  forecast %s  |  %s",
                               fast_period, slow_period, TFName(), scalar,
                               (f == EMPTY_VALUE ? "—" : DoubleToString(f, 2)),
                               label);
-
     // Use ChartWindowFind() to place the HUD inside the oscillator subwindow instead of the main chart
     int subwindow = ChartWindowFind();
-
     if(ObjectFind(0, "EWMAC_HUD") < 0)
         ObjectCreate(0, "EWMAC_HUD", OBJ_LABEL, subwindow, 0, 0);
-
     ObjectSetInteger(0, "EWMAC_HUD", OBJPROP_CORNER,     CORNER_LEFT_UPPER);
     ObjectSetInteger(0, "EWMAC_HUD", OBJPROP_XDISTANCE,  10);
     ObjectSetInteger(0, "EWMAC_HUD", OBJPROP_YDISTANCE,  HUD_Y);
@@ -329,7 +294,6 @@ void DrawHUD(int rates_total)
     ObjectSetInteger(0, "EWMAC_HUD", OBJPROP_BACK,       false);
     ObjectSetInteger(0, "EWMAC_HUD", OBJPROP_HIDDEN,     true);
 }
-
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
