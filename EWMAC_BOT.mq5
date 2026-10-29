@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
 //|                                                   EWMAC_BOT.mq5  |
 //|                 AMARE CAPITAL MANAGEMENT                         |
-//|                 EWMAC Single Timeframe Entry Model               |
+//|                 Exponentially Weighted Moving Average Crossover  |
 //|                 Version 5.00                                     |
 //+------------------------------------------------------------------+
 #property strict
 #property version   "5.00"
-#property description "EWMAC EA: single timeframe entry/exit/trail."
+#property description "EWMAC EA: entry/exit/trail."
 
 #include <Trade/Trade.mqh>
 CTrade trade;
