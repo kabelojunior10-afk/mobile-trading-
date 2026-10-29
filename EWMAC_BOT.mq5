@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
 //|                                                   EWMAC_BOT.mq5  |
 //|                 AMARE CAPITAL MANAGEMENT                         |
-//|     EWMAC Multi-Timeframe: M15 bias / M5 confirm / M1 entry      |
+//|                 EWMAC Single Timeframe Entry Model               |
 //|                 Version 5.00                                     |
 //+------------------------------------------------------------------+
 #property strict
 #property version   "5.00"
-#property description "EWMAC multi-timeframe EA: 15M bias, 5M confirmation, 1M entry/exit/trail."
+#property description "EWMAC EA: single timeframe entry/exit/trail."
 
 #include <Trade/Trade.mqh>
 CTrade trade;
@@ -27,17 +27,12 @@ enum ENUM_EWMAC_PAIR
 //+------------------------------------------------------------------+
 //| INPUTS                                                           |
 //+------------------------------------------------------------------+
-input group "Multi-Timeframe"
-input bool   UseBiasTimeframe           = true;       // enable bias TF filter (false = ignore)
-input bool   UseConfirmTimeframe        = true;       // enable confirmation TF filter (false = ignore)
-input ENUM_TIMEFRAMES BiasTimeframe     = PERIOD_M15; // PRIMARY: direction bias
-input ENUM_TIMEFRAMES ConfirmTimeframe  = PERIOD_M5;  // SECONDARY: must agree with bias
-input ENUM_TIMEFRAMES EntryTimeframe    = PERIOD_M1;  // TRIGGER: entry, exit and trail
-input bool   ExitOnEntryTFFlip          = true;       // close when entry TF forecast flips against trade
-input bool   ExitOnBiasFlip             = true;       // close when bias TF forecast flips against trade
-input bool   TradeCurrentTrend          = true;       // on attach, treat current entry TF direction as armed
+input group "Timeframe"
+input ENUM_TIMEFRAMES EntryTimeframe    = PERIOD_M1;  // entry, exit and trail
+input bool   ExitOnEntryTFFlip          = true;       // close when forecast flips against trade
+input bool   TradeCurrentTrend          = true;       // on attach, treat current direction as armed
 
-input group "EWMAC Strategy (same on all 3 timeframes)"
+input group "EWMAC Strategy"
 input ENUM_EWMAC_PAIR EWMACPair         = EWMAC_8_32;
 input int    StdevWindow                = 50;
 input double ForecastCapMin             = -20.0;
@@ -85,13 +80,12 @@ struct TFState
    int             side;      // +1 / -1 / 0
 };
 
-TFState  g_bias, g_conf, g_entry;
+TFState  g_entry;
 
 int      FastPeriod        = 8;
 int      SlowPeriod        = 32;
 double   ForecastScalar    = 5.3;
 
-int      AlignedSide       = 0;      // enabled filters agree -> side, else 0
 int      ArmedSide         = 0;      // entry TF cross waiting to be used
 int      EntrySideSeen     = 0;      // last known entry TF sign
 int      TrackedSide       = 0;
@@ -101,7 +95,7 @@ datetime LastCloseAttempt  = 0;
 int      g_atr_handle      = INVALID_HANDLE;
 
 string DashPrefix = "EWMAC_DASH_";
-const int DASH_LINES = 15;
+const int DASH_LINES = 13;
 
 string TrailObjName = "EWMAC_ATR_TRAIL";
 string TrailHistPrefix = "EWMAC_TRAIL_HIST_";
@@ -164,23 +158,11 @@ int OnInit()
    if(FixedLots <= 0.0) return INIT_PARAMETERS_INCORRECT;
    if(UseATRTrail && (ATR_Period < 1 || ATR_Multiplier <= 0.0)) return INIT_PARAMETERS_INCORRECT;
 
-   bool tfOrderBad = false;
-   if(UseConfirmTimeframe && PeriodSeconds(EntryTimeframe) >= PeriodSeconds(ConfirmTimeframe)) tfOrderBad = true;
-   if(UseBiasTimeframe    && PeriodSeconds(EntryTimeframe) >= PeriodSeconds(BiasTimeframe))    tfOrderBad = true;
-   if(UseBiasTimeframe && UseConfirmTimeframe && PeriodSeconds(ConfirmTimeframe) >= PeriodSeconds(BiasTimeframe)) tfOrderBad = true;
-   if(tfOrderBad)
-   {
-      Print("Timeframes must satisfy: Entry < Confirm < Bias (for enabled timeframes)");
-      return INIT_PARAMETERS_INCORRECT;
-   }
-
    SetEWMACPeriods();
    SetForecastScalar();
 
-   InitTF(g_bias,  BiasTimeframe);
-   InitTF(g_conf,  ConfirmTimeframe);
    InitTF(g_entry, EntryTimeframe);
-   AlignedSide = 0; ArmedSide = 0; EntrySideSeen = 0; TrackedSide = 0; g_closedByEA = false;
+   ArmedSide = 0; EntrySideSeen = 0; TrackedSide = 0; g_closedByEA = false;
 
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(SlippagePts);
@@ -195,10 +177,8 @@ int OnInit()
    }
 
    Print("==================================================");
-   Print("AMARE CAPITAL MANAGEMENT - EWMAC MTF EA v5.00");
-   Print("Bias ", (UseBiasTimeframe ? TFName(BiasTimeframe) : "OFF"),
-         " | Confirm ", (UseConfirmTimeframe ? TFName(ConfirmTimeframe) : "OFF"),
-         " | Entry ", TFName(EntryTimeframe));
+   Print("AMARE CAPITAL MANAGEMENT - EWMAC EA v5.00");
+   Print("Entry ", TFName(EntryTimeframe));
    Print("==================================================");
    return INIT_SUCCEEDED;
 }
@@ -306,7 +286,7 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-// Refresh one timeframe on its own new bar. Returns true when a new bar was processed.
+// Refresh timeframe on its own new bar. Returns true when a new bar was processed.
 bool RefreshTF(TFState &st)
 {
    datetime barTime = iTime(_Symbol, st.tf, 0);
@@ -326,33 +306,7 @@ bool RefreshTF(TFState &st)
 //+------------------------------------------------------------------+
 void UpdateSignals()
 {
-   if(UseBiasTimeframe)    RefreshTF(g_bias);
-   if(UseConfirmTimeframe) RefreshTF(g_conf);
    if(RefreshTF(g_entry)) ArmEntrySignal();
-
-   AlignedSide = 0;
-   int  side = 0;
-   bool ok   = true;
-
-   if(UseBiasTimeframe)
-   {
-      if(!g_bias.ready || g_bias.side == 0) ok = false;
-      else side = g_bias.side;
-   }
-   if(UseConfirmTimeframe)
-   {
-      if(!g_conf.ready || g_conf.side == 0) ok = false;
-      else if(side != 0 && side != g_conf.side) ok = false;
-      else side = g_conf.side;
-   }
-   if(!UseBiasTimeframe && !UseConfirmTimeframe)
-   {
-      // Entry-only mode: entry TF direction is the aligned side
-      if(g_entry.ready && g_entry.side != 0) side = g_entry.side;
-      else ok = false;
-   }
-
-   if(ok) AlignedSide = side;
 }
 
 //+------------------------------------------------------------------+
@@ -381,8 +335,7 @@ void ManageExit()
    int p = (hb && !hs) ? 1 : ((hs && !hb) ? -1 : 0);
 
    bool exitEntry = (p != 0) && ExitOnEntryTFFlip && g_entry.ready && g_entry.side == -p;
-   bool exitBias  = (p != 0) && UseBiasTimeframe && ExitOnBiasFlip && g_bias.ready && g_bias.side == -p;
-   if(p != 0 && !exitEntry && !exitBias) return;
+   if(p != 0 && !exitEntry) return;
 
    if(TimeCurrent() == LastCloseAttempt) return;
    LastCloseAttempt = TimeCurrent();
@@ -390,7 +343,7 @@ void ManageExit()
    if(CloseAllPositions())
    {
       g_closedByEA = true;
-      string why = (p == 0) ? "conflicting positions" : (exitEntry ? TFName(EntryTimeframe) + " flip" : TFName(BiasTimeframe) + " bias flip");
+      string why = (p == 0) ? "conflicting positions" : TFName(EntryTimeframe) + " flip";
       string msg = "EWMAC EXIT | " + _Symbol + " | " + why;
       Print(msg);
       if(SendPopup) Alert(msg);
@@ -401,15 +354,14 @@ void ManageExit()
 //+------------------------------------------------------------------+
 void TryEntry()
 {
-   if(AlignedSide == 0) return;
-   if(ArmedSide != AlignedSide) return;
-   if(!g_entry.ready || g_entry.side != AlignedSide) return;
+   if(!g_entry.ready || g_entry.side == 0) return;
+   if(ArmedSide != g_entry.side) return;
    if(HasPositionType(POSITION_TYPE_BUY) || HasPositionType(POSITION_TYPE_SELL)) return;
 
    if(TimeCurrent() == LastAttempt) return;
    LastAttempt = TimeCurrent();
 
-   if(ExecuteSignal(AlignedSide)) ArmedSide = 0;
+   if(ExecuteSignal(g_entry.side)) ArmedSide = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -529,16 +481,15 @@ bool ExecuteSignal(int signal)
    }
 
    bool ok = (signal == 1)
-             ? trade.Buy(lots, _Symbol, 0.0, initialSL, 0.0, "EWMAC MTF BUY")
-             : trade.Sell(lots, _Symbol, 0.0, initialSL, 0.0, "EWMAC MTF SELL");
+             ? trade.Buy(lots, _Symbol, 0.0, initialSL, 0.0, "EWMAC BUY")
+             : trade.Sell(lots, _Symbol, 0.0, initialSL, 0.0, "EWMAC SELL");
 
    uint ret = trade.ResultRetcode();
 
    if(ok && (ret == TRADE_RETCODE_DONE || ret == TRADE_RETCODE_DONE_PARTIAL || ret == TRADE_RETCODE_PLACED))
    {
       string msg = "EWMAC " + ((signal == 1) ? "BUY" : "SELL") + " | " + _Symbol + " | Lots " + DoubleToString(lots, 4) +
-                   " | " + (UseBiasTimeframe ? TFName(BiasTimeframe) : "-") + "/" +
-                   (UseConfirmTimeframe ? TFName(ConfirmTimeframe) : "-") + "/" + TFName(EntryTimeframe);
+                   " | " + TFName(EntryTimeframe);
       Print(msg);
       if(SendPopup) Alert(msg);
       if(SendPush) SendNotification(msg);
@@ -803,9 +754,8 @@ string SideText(int side)
 }
 
 //+------------------------------------------------------------------+
-string TFLine(const string label, const TFState &st, const bool enabled)
+string TFLine(const string label, const TFState &st)
 {
-   if(!enabled) return label + " " + TFName(st.tf) + ": OFF";
    string fc  = st.ready ? StringFormat("%+.2f", st.now) : "--";
    string dir = !st.ready ? "CALC" : (st.now > 0.0 ? "BULL" : (st.now < 0.0 ? "BEAR" : "NEUT"));
    return label + " " + TFName(st.tf) + ": " + fc + " " + dir;
@@ -837,29 +787,28 @@ void UpdateDashboard()
    else if(hasSell)      positionText = "SELL";
 
    string statusText;
+   int sig = g_entry.ready ? g_entry.side : 0;
    if(hasBuy || hasSell)                 statusText = "IN TRADE";
-   else if(AlignedSide == 0)             statusText = "WAIT ALIGN";
-   else if(ArmedSide != AlignedSide)     statusText = "WAIT " + TFName(EntryTimeframe) + " CROSS";
+   else if(sig == 0)                     statusText = "WAIT SIGNAL";
+   else if(ArmedSide != sig)             statusText = "WAIT " + TFName(EntryTimeframe) + " CROSS";
    else                                  statusText = "READY";
 
    string trailText = UseATRTrail ? "ON (" + IntegerToString(ATR_Period) + "x" + DoubleToString(ATR_Multiplier,1) + ")" : "OFF";
 
-   string lines[15];
+   string lines[13];
    lines[0]  = "AMARE CAPITAL MANAGEMENT";
-   lines[1]  = "EWMAC MTF v5.00";
+   lines[1]  = "EWMAC v5.00";
    lines[2]  = "----------------------------------";
    lines[3]  = "Symbol:   " + _Symbol;
    lines[4]  = "EWMAC:    " + IntegerToString(FastPeriod) + "/" + IntegerToString(SlowPeriod) + " Scalar " + DoubleToString(ForecastScalar, 2);
-   lines[5]  = TFLine("Bias ", g_bias, UseBiasTimeframe);
-   lines[6]  = TFLine("Conf ", g_conf, UseConfirmTimeframe);
-   lines[7]  = TFLine("Entry", g_entry, true);
-   lines[8]  = "Aligned:  " + SideText(AlignedSide);
-   lines[9]  = "Armed:    " + SideText(ArmedSide);
-   lines[10] = "Position: " + positionText;
-   lines[11] = "Status:   " + statusText;
-   lines[12] = "Lots:     " + DoubleToString(FixedLots, 4);
-   lines[13] = "ATR Trail: " + trailText;
-   lines[14] = " ";
+   lines[5]  = TFLine("Entry", g_entry);
+   lines[6]  = "Signal:   " + SideText(sig);
+   lines[7]  = "Armed:    " + SideText(ArmedSide);
+   lines[8]  = "Position: " + positionText;
+   lines[9]  = "Status:   " + statusText;
+   lines[10] = "Lots:     " + DoubleToString(FixedLots, 4);
+   lines[11] = "ATR Trail: " + trailText;
+   lines[12] = " ";
 
    string bgName = DashPrefix + "BG";
    if(ObjectFind(0, bgName) < 0)
@@ -896,15 +845,11 @@ void UpdateDashboard()
 
       color c = textClr;
       if(i == 0 || i == 1) c = headerClr;
-      else if(i >= 5 && i <= 7)
-      {
-         int sd = (i == 5) ? g_bias.side : ((i == 6) ? g_conf.side : g_entry.side);
-         bool rdy = (i == 5) ? (UseBiasTimeframe && g_bias.ready) : ((i == 6) ? (UseConfirmTimeframe && g_conf.ready) : g_entry.ready);
-         c = !rdy ? textClr : (sd == 1 ? bullClr : (sd == -1 ? bearClr : neutralClr));
-      }
-      else if(i == 8) c = (AlignedSide == 1) ? bullClr : ((AlignedSide == -1) ? bearClr : neutralClr);
-      else if(i == 9) c = (ArmedSide == 1) ? bullClr : ((ArmedSide == -1) ? bearClr : textClr);
-      else if(i == 10) c = (positionText == "FLAT") ? textClr : posClr;
+      else if(i == 5)
+         c = !g_entry.ready ? textClr : (g_entry.side == 1 ? bullClr : (g_entry.side == -1 ? bearClr : neutralClr));
+      else if(i == 6) c = (sig == 1) ? bullClr : ((sig == -1) ? bearClr : neutralClr);
+      else if(i == 7) c = (ArmedSide == 1) ? bullClr : ((ArmedSide == -1) ? bearClr : textClr);
+      else if(i == 8) c = (positionText == "FLAT") ? textClr : posClr;
       ObjectSetInteger(0, name, OBJPROP_COLOR, c);
    }
 }
@@ -922,6 +867,6 @@ void OnDeinit(const int reason)
    ObjectsDeleteAll(0, TrailHistPrefix);
    ObjectDelete(0, TrailObjName);
    Comment("");
-   Print("EWMAC MTF EA stopped. Reason: ", reason);
+   Print("EWMAC EA stopped. Reason: ", reason);
 }
 //+------------------------------------------------------------------+
